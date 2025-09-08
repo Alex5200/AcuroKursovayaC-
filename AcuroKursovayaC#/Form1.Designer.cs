@@ -38,6 +38,7 @@
             label2 = new Label();
             button1 = new Button();
             button2 = new Button();
+            SaveTile = new Button();
             ((System.ComponentModel.ISupportInitialize)pictureBox1).BeginInit();
             ((System.ComponentModel.ISupportInitialize)pictureBox2).BeginInit();
             ((System.ComponentModel.ISupportInitialize)trackBar1).BeginInit();
@@ -76,11 +77,12 @@
             // label1
             // 
             label1.AutoSize = true;
-            label1.Location = new Point(93, 20);
+            label1.Location = new Point(93, 16);
             label1.Name = "label1";
             label1.Size = new Size(24, 15);
             label1.TabIndex = 7;
             label1.Text = "ID: ";
+            label1.Click += label1_Click;
             // 
             // trackBar1
             // 
@@ -100,10 +102,11 @@
             label2.Size = new Size(24, 15);
             label2.TabIndex = 9;
             label2.Text = "ID: ";
+            label2.Click += label2_Click;
             // 
             // button1
             // 
-            button1.Location = new Point(93, 38);
+            button1.Location = new Point(93, 41);
             button1.Name = "button1";
             button1.Size = new Size(75, 23);
             button1.TabIndex = 10;
@@ -121,11 +124,22 @@
             button2.UseVisualStyleBackColor = true;
             button2.Click += button2_Click;
             // 
+            // SaveTile
+            // 
+            SaveTile.Location = new Point(174, 41);
+            SaveTile.Name = "SaveTile";
+            SaveTile.Size = new Size(75, 23);
+            SaveTile.TabIndex = 12;
+            SaveTile.Text = "SaveTile";
+            SaveTile.UseVisualStyleBackColor = true;
+            SaveTile.Click += SaveTile_Click;
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1128, 482);
+            Controls.Add(SaveTile);
             Controls.Add(button2);
             Controls.Add(button1);
             Controls.Add(label2);
@@ -154,5 +168,6 @@
         private Label label2;
         private Button button1;
         private Button button2;
+        private Button SaveTile;
     }
 }
