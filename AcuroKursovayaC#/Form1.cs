@@ -2,48 +2,65 @@ using OpenCvSharp;
 using OpenCvSharp.Aruco;
 using OpenCvSharp.Extensions;
 using System;
-using System.Drawing;
 using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
 
 namespace AcuroKursovayaC_
 {
     public partial class Form1 : Form
     {
-        private TileMap _tileMap;
-
         private VideoCapture _capture;
         private Mat _frame;
         private Bitmap _image1;
         private Mat _cameraMatrix;
         private Mat _distCoeffs;
-        private float _markerLength = 0.1f; // �������� ������ ������� � ������
-        private List<MarkerInfo> _markers = new List<MarkerInfo>(); // ������ ������������ ��������
-        private Bitmap _mapImage; // �����
-        private int _tileSize = 100; // ������ �����
+        private float _markerLength = 0.15f; // Размер маркера 15 см
+        private List<MarkerInfo> _markers = new List<MarkerInfo>();
+        private System.Windows.Forms.Timer _timer;
+        private Mat _mapImage;
+        private List<System.Drawing.Point> _trajectory = new List<System.Drawing.Point>();
+        private System.Drawing.Point _lastRobotPosition = new System.Drawing.Point(300, 300);
+        private Dictionary<string, Mat> _tiles = new Dictionary<string, Mat>();
+        private int _tileSize = 600;
+        private bool _mapInitialized = false;
+        private const double CAMERA_ANGLE = 90.0; // Камера смотрит строго вниз
+        private const double CAMERA_HEIGHT = 2.0; // Высота камеры над полом в метрах
 
         public Form1()
         {
             InitializeComponent();
             InitializeCameraParameters();
-            _tileMap = new TileMap(256); // размер тайла 256x256
+            _timer = new System.Windows.Forms.Timer();
+            _timer.Interval = 33;
+            _timer.Tick += Timer1_Tick;
+            InitializeMap();
+        }
 
+        private void InitializeMap()
+        {
+            // Создаем начальный тайл
+            string key = "0_0";
+            _tiles[key] = new Mat(_tileSize, _tileSize, MatType.CV_8UC3, new Scalar(240, 240, 240));
+            _mapInitialized = true;
         }
 
         private void InitializeCameraParameters()
         {
-            // ��������� ��������� ������ (�������� �� �������������!)
-            double fx = trackBar1.Value; // �������� ����������
-            double fy = trackBar1.Value;
-            double cx = 320;  // ��� ���������� 640x480
+            // Параметры камеры для вертикального обзора
+            double fx = 800;
+            double fy = 800;
+            double cx = 320;
             double cy = 240;
-            _cameraMatrix = new Mat(3, 3, MatType.CV_64FC1);
+
+            _cameraMatrix = Mat.Eye(3, 3, MatType.CV_64FC1);
             _cameraMatrix.Set<double>(0, 0, fx);
             _cameraMatrix.Set<double>(0, 2, cx);
             _cameraMatrix.Set<double>(1, 1, fy);
             _cameraMatrix.Set<double>(1, 2, cy);
 
-            _distCoeffs = new Mat(1, 5, MatType.CV_64FC1);
+            _distCoeffs = Mat.Zeros(1, 5, MatType.CV_64FC1);
             _distCoeffs.Set<double>(0, 0, 0.05);
             _distCoeffs.Set<double>(0, 1, -0.1);
             _distCoeffs.Set<double>(0, 2, 0.001);
@@ -53,129 +70,62 @@ namespace AcuroKursovayaC_
 
         private void btnStart_Click(object sender, EventArgs e)
         {
-            _capture = new VideoCapture(2); // ����������� ���������� ������ ������
+            if (_capture?.IsOpened() == true)
+            {
+                _timer.Stop();
+                _capture.Release();
+                _capture.Dispose();
+                btnStart.Text = "Start";
+                return;
+            }
+
+            _capture = new VideoCapture(0);
             if (!_capture.IsOpened())
             {
-                MessageBox.Show("�� ������� ������������ � ������!");
-                return;
+                _capture?.Dispose();
+                _capture = new VideoCapture(1);
+                if (!_capture.IsOpened())
+                {
+                    _capture?.Dispose();
+                    _capture = new VideoCapture(2);
+                    if (!_capture.IsOpened())
+                    {
+                        MessageBox.Show("Не удалось подключиться ни к одной камере!");
+                        return;
+                    }
+                }
             }
 
             _capture.FrameWidth = 640;
             _capture.FrameHeight = 480;
             _frame = new Mat();
 
-            timer1.Interval = 33;
-            timer1.Start();
+            _timer.Start();
+            btnStart.Text = "Stop";
         }
 
-        private void timer1_Tick(object sender, EventArgs e)
+        private void Timer1_Tick(object sender, EventArgs e)
         {
-            if (_capture == null || !_capture.IsOpened()) return;
+            if (_capture?.IsOpened() != true) return;
 
-            _capture.Read(_frame);
-            if (_frame.Empty()) return;
-
-            ProcessFrame();
-            UpdateUI();
+            if (_capture.Read(_frame) && !_frame.Empty())
+            {
+                ProcessFrame();
+                UpdateUI();
+            }
         }
-        // Нужно добавить метод для перспективной проекции:
-        private Mat GetWarpedImage(Mat frame, Mat rvec, Mat tvec)
-        {
-            // Создаем матрицу гомографии
-            Mat homography = new Mat();
-            Cv2.Rodrigues(rvec, new Mat()); // преобразуем в матрицу вращения
 
-            // Применяем перспективную трансформацию
-            Point2f[] srcPoints = { new Point2f(0, 0), new Point2f(640, 0), new Point2f(640, 480), new Point2f(0, 480) };
-            // Рассчитываем целевые точки на основе позиции камеры
-
-            Mat perspectiveMatrix = Cv2.GetPerspectiveTransform(srcPoints, dstPoints);
-            Mat warped = new Mat();
-            Cv2.WarpPerspective(frame, warped, perspectiveMatrix, new OpenCvSharp.Size(800, 600));
-
-            return warped;
-        }
-        //private void ProcessFrame()
-        //{
-        //    var dict = CvAruco.GetPredefinedDictionary(PredefinedDictionaryName.Dict4X4_100);
-        //    DetectorParameters parameters = new DetectorParameters();
-        //    parameters.CornerRefinementMethod = CornerRefineMethod.Subpix; // ��������� ��������
-
-        //    CvAruco.DetectMarkers(_frame, dict, out var corners, out var ids, parameters, out _);
-
-        //    if (ids == null || ids.Length == 0) return;
-
-        //    var rvecs = new Mat();
-        //    var tvecs = new Mat();
-        //    // ������ ������� ��������
-        //    CvAruco.EstimatePoseSingleMarkers(
-        //        corners,
-        //        _markerLength,
-        //        _cameraMatrix,
-        //        _distCoeffs,
-        //        rvecs,
-        //        tvecs
-        //    );
-
-        //    double minDistance = double.MaxValue;
-        //    int closestMarkerId = -1;
-        //    for (int i = 0; i < ids.Length; i++)
-        //    {
-        //        double distance = CalculateDistance(tvecs, i);
-
-        //        if (distance < minDistance)
-        //        {
-        //            minDistance = distance;
-        //            closestMarkerId = ids[i];
-        //        }
-
-
-
-        //    }
-
-        //    if (closestMarkerId != -1 && minDistance <= 1)
-        //    {
-        //        label1.Text = $"Distance to closest marker (ID: {closestMarkerId}): {minDistance:F2} m {tvecs.At<int>(0)}";
-
-        //    }
-
-        //    // ��������� ���������� � ��������
-        //    for (int i = 0; i < ids.Length; i++)
-        //    {
-        //        var markerCorners = corners[i].ToArray();
-        //        //var center = CalculateMarkerCenter(markerCorners);
-        //        var center = Convert3DToMapPosition(tvecs, i);
-        //        DrawMarkerInfo(corners[i]);
-        //        UpdateDistanceInfo(ids[i], tvecs, i);
-
-        //        // ���������, ����� �� ������
-        //        bool isNewMarker = true;
-        //        foreach (var marker in _markers)
-        //        {
-        //            if (marker.Id == ids[i])
-        //            {
-        //                isNewMarker = false;
-        //                break;
-        //            }
-        //        }
-
-        //        if (isNewMarker)
-        //        {
-        //            // ��������� ����� ������ � ������
-        //            _markers.Add(new MarkerInfo { Id = ids[i], Position = new OpenCvSharp.Point((int)center.X, (int)center.Y) });
-        //            UpdateMap();
-        //        }
-        //    }
-        //}
-        // Исправленный метод обработки кадра:
-        // Модифицируйте метод ProcessFrame:
         private void ProcessFrame()
         {
             var dict = CvAruco.GetPredefinedDictionary(PredefinedDictionaryName.Dict4X4_100);
-            DetectorParameters parameters = new DetectorParameters();
+            var parameters = new DetectorParameters();
             parameters.CornerRefinementMethod = CornerRefineMethod.Subpix;
 
-            CvAruco.DetectMarkers(_frame, dict, out var corners, out var ids, parameters, out _);
+            Point2f[][] corners;
+            int[] ids;
+            Point2f[][] rejectedImgPoints;
+
+            CvAruco.DetectMarkers(_frame, dict, out corners, out ids, parameters, out rejectedImgPoints);
 
             if (ids == null || ids.Length == 0) return;
 
@@ -191,288 +141,463 @@ namespace AcuroKursovayaC_
                 tvecs
             );
 
-            // Обработка маркеров и добавление в тайловую карту
+            ProcessMarkersAndRobotPosition(ids, tvecs, corners, rvecs);
+
+            rvecs.Dispose();
+            tvecs.Dispose();
+        }
+
+        private void ProcessMarkersAndRobotPosition(int[] ids, Mat tvecs, Point2f[][] corners, Mat rvecs)
+        {
+            // Находим ближайший маркер для определения позиции робота
+            int closestMarkerIndex = 0;
+            double minDistance = double.MaxValue;
+
             for (int i = 0; i < ids.Length; i++)
             {
-                // Преобразуем 3D координаты в мировые координаты карты
-                double x = tvecs.At<double>(i, 0) * 100 + 400; // масштабирование
-                double y = tvecs.At<double>(i, 2) * 100 + 300; // z координата как Y
+                double x = tvecs.At<double>(i, 0);
+                double y = tvecs.At<double>(i, 1);
+                double z = tvecs.At<double>(i, 2);
 
-                // Добавляем маркер в тайловую карту
-                _tileMap.AddPoint(x, y, Scalar.Red, 5);
+                // При вертикальной камере Z - глубина, X и Y - горизонтальные координаты
+                double distance = Math.Abs(z); // Расстояние по глубине
 
-                // Добавляем ID маркера
-                // Для текста нужно использовать дополнительный метод или OpenCV
-
-                // Обновляем список маркеров
-                bool isNewMarker = true;
-                foreach (var marker in _markers)
+                if (distance < minDistance && distance > 0)
                 {
-                    if (marker.Id == ids[i])
+                    minDistance = distance;
+                    closestMarkerIndex = i;
+                }
+            }
+
+            // Определяем позицию робота на основе ближайшего маркера
+            if (ids.Length > 0 && minDistance < 5.0) // Ограничиваем расстояние
+            {
+                // Получаем координаты ближайшего маркера
+                double markerX = tvecs.At<double>(closestMarkerIndex, 0); // Поперечная координата
+                double markerY = tvecs.At<double>(closestMarkerIndex, 1); // Вертикальная координата  
+                double markerZ = tvecs.At<double>(closestMarkerIndex, 2); // Глубина (расстояние до камеры)
+
+                // При вертикальной камере:
+                // X - смещение влево/вправо
+                // Y - смещение вверх/вниз  
+                // Z - расстояние от камеры
+
+                // Преобразуем в координаты карты (с центрированием)
+                // Учитываем, что камера смотрит сверху, поэтому X и Z определяют положение на полу
+                int mapX = (int)(markerX * 300 + 300); // Масштаб: 1м = 300px, центр в (300,300)
+                int mapY = (int)(-markerZ * 300 + 300); // Минус потому что Z направлен от камеры
+
+                System.Drawing.Point robotPosition = new System.Drawing.Point(mapX, mapY);
+
+                // Обновляем траекторию
+                if (_trajectory.Count == 0 ||
+                    DistanceBetweenPoints(robotPosition, _lastRobotPosition) > 5)
+                {
+                    _trajectory.Add(robotPosition);
+                    _lastRobotPosition = robotPosition;
+
+                    // Добавляем точку на карту (синяя точка для робота)
+                    AddPointToMap(mapX, mapY, new Scalar(255, 100, 100), 5);
+                }
+            }
+
+            // Обработка каждого маркера
+            for (int i = 0; i < ids.Length; i++)
+            {
+                // Получаем координаты маркера
+                double markerX = tvecs.At<double>(i, 0);
+                double markerY = tvecs.At<double>(i, 1);
+                double markerZ = tvecs.At<double>(i, 2);
+
+                // Преобразуем в координаты карты
+                int mapX = (int)(markerX * 300 + 300);
+                int mapY = (int)(-markerZ * 300 + 300); // Минус для правильной ориентации
+
+                // Визуализация на кадре
+                VisualizeMarker(corners[i], ids[i]);
+
+                // Добавляем маркер в систему отслеживания
+                bool markerExists = false;
+                int markerIndex = -1;
+
+                for (int j = 0; j < _markers.Count; j++)
+                {
+                    if (_markers[j].Id == ids[i])
                     {
-                        isNewMarker = false;
-                        marker.Position = new OpenCvSharp.Point((int)x, (int)y);
+                        markerExists = true;
+                        markerIndex = j;
                         break;
                     }
                 }
 
-                if (isNewMarker)
+                if (!markerExists)
                 {
                     _markers.Add(new MarkerInfo
                     {
                         Id = ids[i],
-                        Position = new OpenCvSharp.Point((int)x, (int)y)
+                        Position = new OpenCvSharp.Point(mapX, mapY),
+                        WorldPosition = new System.Drawing.PointF((float)markerX, (float)(-markerZ))
                     });
+
+                    // Добавляем маркер на карту (красная точка)
+                    AddPointToMap(mapX, mapY, new Scalar(0, 0, 255), 7);
                 }
-            }
-
-            // Если есть несколько маркеров, рисуем линии между ними
-            if (_markers.Count > 1)
-            {
-                for (int i = 0; i < _markers.Count - 1; i++)
+                else if (markerIndex >= 0)
                 {
-                    _tileMap.AddLine(
-                        _markers[i].Position.X, _markers[i].Position.Y,
-                        _markers[i + 1].Position.X, _markers[i + 1].Position.Y,
-                        Scalar.Blue, 2);
-                }
-            }
+                    // Обновляем позицию если она изменилась значительно
+                    var oldPos = _markers[markerIndex].Position;
+                    double distance = Math.Sqrt(
+                        Math.Pow(oldPos.X - mapX, 2) +
+                        Math.Pow(oldPos.Y - mapY, 2));
 
-            UpdateMap();
-        }
-
-        // Модифицируйте UpdateMap:
-        private void UpdateMap()
-        {
-            // Получаем полную карту из тайлов
-            Mat fullMap = _tileMap.GetFullMap();
-
-            if (fullMap.Width > 0 && fullMap.Height > 0)
-            {
-                // Рисуем маркеры на полной карте для отображения
-                foreach (var marker in _markers)
-                {
-                    if (marker.Position.X >= 0 && marker.Position.Y >= 0)
+                    if (distance > 8)
                     {
-                        Cv2.Circle(fullMap, marker.Position, 10, Scalar.Red, -1);
-                        Cv2.PutText(fullMap, marker.Id.ToString(),
-                            new OpenCvSharp.Point(marker.Position.X + 15, marker.Position.Y + 15),
-                            HersheyFonts.HersheySimplex, 0.5, Scalar.Black, 1);
+                        _markers[markerIndex].Position = new OpenCvSharp.Point(mapX, mapY);
+                        _markers[markerIndex].WorldPosition = new System.Drawing.PointF((float)markerX, (float)(-markerZ));
                     }
                 }
+            }
 
-                // Преобразуем в Bitmap для отображения
-                _mapImage?.Dispose();
-                _mapImage = OpenCvSharp.Extensions.BitmapConverter.ToBitmap(fullMap);
-                fullMap.Dispose();
+            // Рисуем линии траектории на карте
+            for (int i = 1; i < _trajectory.Count; i++)
+            {
+                AddLineToMap(
+                    _trajectory[i - 1].X, _trajectory[i - 1].Y,
+                    _trajectory[i].X, _trajectory[i].Y,
+                    new Scalar(0, 200, 0), 3);
             }
         }
 
-        // Добавьте метод для сохранения тайлов:
+        private double DistanceBetweenPoints(System.Drawing.Point p1, System.Drawing.Point p2)
+        {
+            return Math.Sqrt(Math.Pow(p1.X - p2.X, 2) + Math.Pow(p1.Y - p2.Y, 2));
+        }
+
+        private void VisualizeMarker(Point2f[] corners, int markerId)
+        {
+            // Рисуем контур маркера
+            for (int i = 0; i < corners.Length; i++)
+            {
+                var pt1 = new OpenCvSharp.Point(corners[i].X, corners[i].Y);
+                var pt2 = new OpenCvSharp.Point(
+                    corners[(i + 1) % corners.Length].X,
+                    corners[(i + 1) % corners.Length].Y);
+                Cv2.Line(_frame, pt1, pt2, new Scalar(0, 255, 0), 2);
+            }
+
+            // Рисуем углы
+            for (int i = 0; i < corners.Length; i++)
+            {
+                Cv2.Circle(_frame, new OpenCvSharp.Point(corners[i].X, corners[i].Y), 4, new Scalar(0, 0, 255), -1);
+            }
+
+            // Добавляем ID маркера
+            if (corners.Length > 0)
+            {
+                float centerX = 0, centerY = 0;
+                foreach (var point in corners)
+                {
+                    centerX += point.X;
+                    centerY += point.Y;
+                }
+                centerX /= corners.Length;
+                centerY /= corners.Length;
+
+                Cv2.PutText(_frame, markerId.ToString(),
+                    new OpenCvSharp.Point(centerX, centerY - 20),
+                    HersheyFonts.HersheySimplex, 0.8, new Scalar(255, 0, 0), 2);
+            }
+        }
+
+        private void AddPointToMap(int x, int y, Scalar color, int radius)
+        {
+            try
+            {
+                // Используем основной тайл
+                string key = "0_0";
+                if (!_tiles.ContainsKey(key))
+                {
+                    _tiles[key] = new Mat(_tileSize, _tileSize, MatType.CV_8UC3, new Scalar(240, 240, 240));
+                }
+
+                // Проверяем границы
+                if (x >= 0 && x < _tileSize && y >= 0 && y < _tileSize)
+                {
+                    Cv2.Circle(_tiles[key], new OpenCvSharp.Point(x, y), radius, color, -1);
+
+                    // Добавляем контур для лучшей видимости
+                    if (radius > 3)
+                    {
+                        Cv2.Circle(_tiles[key], new OpenCvSharp.Point(x, y), radius + 1, new Scalar(0, 0, 0), 1);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка добавления точки на карту: {ex.Message}");
+            }
+        }
+
+        private void AddLineToMap(int startX, int startY, int endX, int endY, Scalar color, int thickness)
+        {
+            try
+            {
+                string key = "0_0";
+                if (_tiles.ContainsKey(key))
+                {
+                    // Проверяем границы
+                    if (startX >= 0 && startX < _tileSize && startY >= 0 && startY < _tileSize &&
+                        endX >= 0 && endX < _tileSize && endY >= 0 && endY < _tileSize)
+                    {
+                        Cv2.Line(_tiles[key],
+                            new OpenCvSharp.Point(startX, startY),
+                            new OpenCvSharp.Point(endX, endY),
+                            color, thickness);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка добавления линии на карту: {ex.Message}");
+            }
+        }
+
+        private void UpdateUI()
+        {
+            try
+            {
+                // Обновляем видео с камеры
+                _image1?.Dispose();
+                _image1 = _frame.ToBitmap();
+
+                pictureBox1.Image?.Dispose();
+                pictureBox1.Image = _image1;
+                pictureBox1.SizeMode = PictureBoxSizeMode.Zoom;
+
+                // Обновляем карту
+                UpdateMapImage();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка обновления UI: {ex.Message}");
+            }
+        }
+
+        private void UpdateMapImage()
+        {
+            try
+            {
+                string key = "0_0";
+                if (_tiles.ContainsKey(key))
+                {
+                    // Создаем копию для отображения
+                    var displayMap = _tiles[key].Clone();
+
+                    // Добавляем сетку для лучшей ориентации
+                    DrawGrid(displayMap);
+
+                    // Добавляем маркеры поверх тайлов
+                    foreach (var marker in _markers)
+                    {
+                        if (marker.Position.X >= 0 && marker.Position.X < _tileSize &&
+                            marker.Position.Y >= 0 && marker.Position.Y < _tileSize)
+                        {
+                            // Красный круг для маркера
+                            Cv2.Circle(displayMap, marker.Position, 10, new Scalar(0, 0, 255), -1);
+                            Cv2.Circle(displayMap, marker.Position, 12, new Scalar(0, 0, 0), 2);
+
+                            // ID маркера
+                            Cv2.PutText(displayMap, marker.Id.ToString(),
+                                new OpenCvSharp.Point(marker.Position.X + 15, marker.Position.Y - 15),
+                                HersheyFonts.HersheySimplex, 0.7, new Scalar(0, 0, 0), 2);
+                        }
+                    }
+
+                    // Рисуем траекторию
+                    if (_trajectory.Count > 1)
+                    {
+                        var points = new OpenCvSharp.Point[_trajectory.Count];
+                        for (int i = 0; i < _trajectory.Count; i++)
+                        {
+                            points[i] = new OpenCvSharp.Point(_trajectory[i].X, _trajectory[i].Y);
+                        }
+                        Cv2.Polylines(displayMap, new[] { points }, false, new Scalar(0, 200, 0), 3);
+                    }
+
+                    // Рисуем текущую позицию робота
+                    if (_trajectory.Count > 0)
+                    {
+                        var currentPos = _trajectory[_trajectory.Count - 1];
+                        if (currentPos.X >= 0 && currentPos.X < _tileSize &&
+                            currentPos.Y >= 0 && currentPos.Y < _tileSize)
+                        {
+                            // Синий треугольник для робота
+                            var points = new OpenCvSharp.Point[]
+                            {
+                                new OpenCvSharp.Point(currentPos.X, currentPos.Y - 10),
+                                new OpenCvSharp.Point(currentPos.X - 8, currentPos.Y + 8),
+                                new OpenCvSharp.Point(currentPos.X + 8, currentPos.Y + 8)
+                            };
+                            Cv2.FillConvexPoly(displayMap, points, new Scalar(255, 100, 100));
+                            Cv2.Polylines(displayMap, new[] { points }, true, new Scalar(0, 0, 0), 2);
+                        }
+                    }
+
+                    var bitmap = OpenCvSharp.Extensions.BitmapConverter.ToBitmap(displayMap);
+                    displayMap.Dispose();
+
+                    pictureBox2.Image?.Dispose();
+                    pictureBox2.Image = bitmap;
+                    pictureBox2.SizeMode = PictureBoxSizeMode.Zoom;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка обновления карты: {ex.Message}");
+            }
+        }
+
+        private void DrawGrid(Mat map)
+        {
+            try
+            {
+                int gridSize = 50; // 50 пикселей = ~16.7 см при масштабе 1м = 300px
+                Scalar gridColor = new Scalar(200, 200, 200);
+
+                // Вертикальные линии
+                for (int x = 0; x < map.Width; x += gridSize)
+                {
+                    Cv2.Line(map, new OpenCvSharp.Point(x, 0), new OpenCvSharp.Point(x, map.Height), gridColor, 1);
+                }
+
+                // Горизонтальные линии
+                for (int y = 0; y < map.Height; y += gridSize)
+                {
+                    Cv2.Line(map, new OpenCvSharp.Point(0, y), new OpenCvSharp.Point(map.Width, y), gridColor, 1);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка рисования сетки: {ex.Message}");
+            }
+        }
+
         private void SaveTiles()
         {
             try
             {
-                string tilesDirectory = Path.Combine(Application.StartupPath, "tiles");
-                _tileMap.SaveTiles(tilesDirectory);
-                MessageBox.Show($"Тайлы сохранены в папку: {tilesDirectory}");
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string mapDirectory = Path.Combine(Application.StartupPath, $"robot_map_{timestamp}");
+
+                if (!Directory.Exists(mapDirectory))
+                {
+                    Directory.CreateDirectory(mapDirectory);
+                }
+
+                foreach (var kvp in _tiles)
+                {
+                    try
+                    {
+                        string filePath = Path.Combine(mapDirectory, $"map_tile_{kvp.Key}.png");
+                        Cv2.ImWrite(filePath, kvp.Value);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Ошибка сохранения тайла {kvp.Key}: {ex.Message}");
+                    }
+                }
+
+                SaveMarkerInfo(mapDirectory);
+
+                MessageBox.Show($"Карта сохранена в папку: {mapDirectory}",
+                    "Сохранение карты", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка при сохранении тайлов: {ex.Message}");
+                MessageBox.Show($"Ошибка сохранения карты: {ex.Message}",
+                    "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-
-
-        private double CalculateDistance(Mat tvecs, int index)
+        private void SaveMarkerInfo(string directory)
         {
-            // ��������� ������ ����������� (tvec) ��� �������� �������
-            double x = tvecs.At<double>(index, 0);
-            double y = tvecs.At<double>(index, 1);
-            double z = tvecs.At<double>(index, 2);
-
-            // ��������� ��������� ���������� �� ������ �� �������
-            return Math.Sqrt(x * x + y * y + z * z);
-        }
-
-        private void DrawMarkerInfo(Point2f[] corners)
-        {
-            foreach (var corner in corners)
+            try
             {
-                Cv2.Circle(_frame, (OpenCvSharp.Point)corner, 10, Scalar.Red, -1);
+                string infoFile = Path.Combine(directory, "markers_info.txt");
+                using (var writer = new StreamWriter(infoFile))
+                {
+                    writer.WriteLine("Информация о маркерах:");
+                    writer.WriteLine("====================");
+                    writer.WriteLine($"Всего маркеров: {_markers.Count}");
+                    writer.WriteLine($"Угол камеры: {CAMERA_ANGLE} градусов");
+                    writer.WriteLine($"Высота камеры: {CAMERA_HEIGHT} м");
+                    writer.WriteLine();
+
+                    foreach (var marker in _markers)
+                    {
+                        writer.WriteLine($"ID: {marker.Id}");
+                        writer.WriteLine($"Координаты на карте: ({marker.Position.X}, {marker.Position.Y})");
+                        writer.WriteLine($"Мировые координаты: ({marker.WorldPosition.X:F3}, {marker.WorldPosition.Y:F3})");
+                        writer.WriteLine("---");
+                    }
+
+                    writer.WriteLine();
+                    writer.WriteLine("Траектория робота:");
+                    writer.WriteLine("=================");
+                    for (int i = 0; i < _trajectory.Count; i++)
+                    {
+                        writer.WriteLine($"Точка {i + 1}: ({_trajectory[i].X}, {_trajectory[i].Y})");
+                    }
+                }
             }
-        }
-
-        private void UpdateDistanceInfo(int markerId, Mat tvec, int index)
-        {
-            // tvec[2] - ���������� �� ��� Z (� ������)
-            double z = tvec.At<double>(index, 2);
-
-            if (z > 0 && z < 1) // ����������� �������, ����������� �� �������
+            catch (Exception ex)
             {
-                label2.Text = $"ID: {markerId}\nDistance: {z:F2} m";
-            }
-        }
-
-        private OpenCvSharp.Point CalculateMarkerCenter(Point2f[] corners)
-        {
-            float x = 0, y = 0;
-            foreach (var p in corners)
-            {
-                x += p.X;
-                y += p.Y;
-            }
-            return new OpenCvSharp.Point((int)(x / 4), (int)(y / 4));
-        }
-        private OpenCvSharp.Point Convert3DToMapPosition(Mat tvec, int index)
-        {
-            // Используем tvec для получения реальных координат
-            double x = tvec.At<double>(index, 0);
-            double z = tvec.At<double>(index, 2); // z - глубина
-
-            // Преобразуем в координаты карты
-            int mapX = (int)(x * 100 + 400); // масштабирование и центрирование
-            int mapY = (int)(z * 100 + 300);
-
-            return new OpenCvSharp.Point(mapX, mapY);
-        }
-        private List<PictureBox> pictureBoxes = new List<PictureBox>();
-        private int currentIndex = 0;
-        private IEnumerable<Point2f> dstPoints;
-
-        //private void UpdateMap()
-        //{
-        //    if (_mapImage == null)
-        //    {
-        //        _mapImage = new Bitmap(800, 600); // ������� �����
-        //    }
-
-        //    using (Graphics g = Graphics.FromImage(_mapImage))
-        //    {
-        //        g.Clear(Color.White); // ������� �����
-
-        //        System.Drawing.Point[] points = new System.Drawing.Point[_markers.Count];
-        //        for (int i = 0; i < _markers.Count; i++)
-        //        {
-        //            points[i] = new System.Drawing.Point(_markers[i].Position.X, _markers[i].Position.Y);
-        //        }
-
-        //        if (points.Length > 1)
-        //        {
-        //            g.DrawLines(Pens.Blue, points);
-        //        }
-
-        //        foreach (var marker in _markers)
-        //        {
-        //            if (marker.Position.X >= 0 && marker.Position.X < _mapImage.Width &&
-        //                marker.Position.Y >= 0 && marker.Position.Y < _mapImage.Height)
-        //            {
-        //                if (marker.Id == 0)
-        //                {
-        //                    g.DrawRectangle(Pens.Blue, marker.Position.X - 10, marker.Position.Y - 10, 20, 20);
-        //                    g.DrawString("�����", Font, Brushes.Black, new System.Drawing.Point(marker.Position.X - 20, marker.Position.Y - 20));
-        //                }
-        //                else if (marker.Id == 5)
-        //                {
-        //                    g.DrawRectangle(Pens.Green, marker.Position.X - 10, marker.Position.Y - 10, 20, 20);
-        //                    g.DrawString("�����", Font, Brushes.Black, new System.Drawing.Point(marker.Position.X - 20, marker.Position.Y - 20));
-        //                }
-        //                else
-        //                {
-        //                    g.DrawRectangle(Pens.Red, marker.Position.X - 10, marker.Position.Y - 10, 20, 20);
-        //                }
-        //            }
-        //        }
-        //    }
-
-        //    if (_mapImage != null)
-        //    {
-        //        PictureBox pictureBox = new PictureBox
-        //        {
-        //            Image = (Bitmap)_mapImage.Clone(),
-        //            SizeMode = PictureBoxSizeMode.Zoom,
-        //            Location = new System.Drawing.Point(10, 10 + pictureBox2.Height + 10 + (pictureBoxes.Count * 610)),
-        //            Size = new System.Drawing.Size(800, 600)
-        //        };
-
-        //        pictureBoxes.Add(pictureBox);
-        //        this.Controls.Add(pictureBox);
-        //    }
-        //}
-
-        private void UpdateUI()
-        {
-            if (_image1 != null)
-            {
-                _image1.Dispose();
-            }
-
-            _image1 = _frame.ToBitmap();
-            pictureBox1.Image?.Dispose();
-            pictureBox1.Image = _image1;
-            pictureBox1.SizeMode = PictureBoxSizeMode.Zoom;
-
-            if (_mapImage != null)
-            {
-                pictureBox2.Image?.Dispose();
-                pictureBox2.Image = (Bitmap)_mapImage.Clone();
-                pictureBox2.SizeMode = PictureBoxSizeMode.Zoom;
+                Console.WriteLine($"Ошибка сохранения информации о маркерах: {ex.Message}");
             }
         }
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
-            timer1.Stop();
+            _timer?.Stop();
+            SaveTiles();
+
+            _capture?.Release();
             _capture?.Dispose();
             _frame?.Dispose();
             _cameraMatrix?.Dispose();
             _distCoeffs?.Dispose();
+            _image1?.Dispose();
+
+            foreach (var tile in _tiles.Values)
+            {
+                tile?.Dispose();
+            }
+            _tiles.Clear();
         }
 
         private void trackBar1_ValueChanged(object sender, EventArgs e)
         {
-            InitializeCameraParameters();
+            // Игнорируем для упрощения
         }
 
         private void button1_Click(object sender, EventArgs e)
         {
-            if (currentIndex > 0)
-            {
-                currentIndex--;
-            }
-
-            foreach (var pictureBox in pictureBoxes)
-            {
-                pictureBox.Visible = false;
-            }
-
-            pictureBoxes[currentIndex].Visible = true;
+            // Пустой обработчик
         }
 
         private void button2_Click(object sender, EventArgs e)
         {
-            if (currentIndex < pictureBoxes.Count - 1)
-            {
-                currentIndex++;
-            }
-
-            foreach (var pictureBox in pictureBoxes)
-            {
-                pictureBox.Visible = false;
-            }
-
-            pictureBoxes[currentIndex].Visible = true;
-        }
-
-        private void label2_Click(object sender, EventArgs e)
-        {
-
+            // Пустой обработчик
         }
 
         private void label1_Click(object sender, EventArgs e)
         {
+            // Пустой обработчик
+        }
 
+        private void label2_Click(object sender, EventArgs e)
+        {
+            // Пустой обработчик
         }
 
         private void SaveTile_Click(object sender, EventArgs e)
@@ -485,5 +610,6 @@ namespace AcuroKursovayaC_
     {
         public int Id { get; set; }
         public OpenCvSharp.Point Position { get; set; }
+        public System.Drawing.PointF WorldPosition { get; set; }
     }
 }
